@@ -8,7 +8,28 @@ import numpy as np
 
 from .deeplab_resnet import resnet50_locate
 from .vgg import vgg16_locate
-from torch.autograd import Variable
+
+from torchvision.models.resnet import Bottleneck, BasicBlock, ResNet, model_urls
+from torchvision.models.utils import load_state_dict_from_url
+from torch.quantization import QuantStub, DeQuantStub, fuse_modules
+from torch._jit_internal import Optional
+from torchvision.models.quantization.utils import _replace_relu, quantize_model
+
+__all__ = ['QuantizableResNet', 'resnet18', 'resnet50',
+           'resnext101_32x8d']
+
+
+quant_model_urls = {
+    'resnet18_fbgemm':
+        'https://download.pytorch.org/models/quantized/resnet18_fbgemm_16fa66dd.pth',
+    'resnet50_fbgemm':
+        'https://download.pytorch.org/models/quantized/resnet50_fbgemm_bf931d71.pth',
+    'resnext101_32x8d_fbgemm':
+        'https://download.pytorch.org/models/quantized/resnext101_32x8_fbgemm_09835ccf.pth',
+}
+
+
+
 
 config_vgg = {'convert': [[128,256,512,512,512],[64,128,256,512,512]], 'deep_pool': [[512, 512, 256, 128], [512, 256, 128, 128], [True, True, True, False], [True, True, True, False]], 'score': 128}  # no convert layer, no conv6
 
@@ -70,27 +91,25 @@ class ScoreLayer(nn.Module):
             x = F.interpolate(x, x_size[2:], mode='bilinear', align_corners=True)
         return x
 
-def extra_layer(base_model_cfg, vgg):
-    if base_model_cfg == 'vgg':
-        config = config_vgg
-    elif base_model_cfg == 'resnet':
-        config = config_resnet
-    convert_layers, deep_pool_layers, score_layers = [], [], []
-    convert_layers = ConvertLayer(config['convert'])
 
-    for i in range(len(config['deep_pool'][0])):
-        deep_pool_layers += [DeepPoolLayer(config['deep_pool'][0][i], config['deep_pool'][1][i], config['deep_pool'][2][i], config['deep_pool'][3][i])]
-
-    score_layers = ScoreLayer(config['score'])
-
-    return vgg, convert_layers, deep_pool_layers, score_layers
 
 
 class PoolNet(nn.Module):
-    def __init__(self, base_model_cfg, base, convert_layers, deep_pool_layers, score_layers):
+    def __init__(self):
         super(PoolNet, self).__init__()
-        self.base_model_cfg = base_model_cfg
-        self.base = base
+        config = config_resnet
+        convert_layers, deep_pool_layers, score_layers = [], [], []
+        convert_layers = ConvertLayer(config['convert'])
+        test = 15
+        self.test = test
+        
+        for i in range(len(config['deep_pool'][0])):
+            deep_pool_layers += [DeepPoolLayer(config['deep_pool'][0][i], config['deep_pool'][1][i], config['deep_pool'][2][i], config['deep_pool'][3][i])]
+
+        score_layers = ScoreLayer(config['score'])        
+
+        self.base_model_cfg = 'resnet'
+        self.base = ResNet_locate(Bottleneck, [3, 4, 6, 3])
         self.deep_pool = nn.ModuleList(deep_pool_layers)
         self.score = score_layers
         if self.base_model_cfg == 'resnet':
@@ -112,14 +131,154 @@ class PoolNet(nn.Module):
         merge = self.score(merge, x_size)
         return merge
 
-def build_model(base_model_cfg='vgg'):
-    if base_model_cfg == 'vgg':
-        return PoolNet(base_model_cfg, *extra_layer(base_model_cfg, vgg16_locate()))
-    elif base_model_cfg == 'resnet':
-        return PoolNet(base_model_cfg, *extra_layer(base_model_cfg, resnet50_locate()))
 
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
         m.weight.data.normal_(0, 0.01)
         if m.bias is not None:
             m.bias.data.zero_()
+
+
+
+
+class QuantizableBasicBlock(BasicBlock):
+    def __init__(self, *args, **kwargs):
+        super(QuantizableBasicBlock, self).__init__(*args, **kwargs)
+        self.add_relu = torch.nn.quantized.FloatFunctional()
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out = self.add_relu.add_relu(out, identity)
+
+        return out
+
+    def fuse_model(self):
+        torch.quantization.fuse_modules(self, [['conv1', 'bn1', 'relu'],
+                                               ['conv2', 'bn2']], inplace=True)
+        if self.downsample:
+            torch.quantization.fuse_modules(self.downsample, ['0', '1'], inplace=True)
+
+
+class QuantizableBottleneck(Bottleneck):
+    def __init__(self, *args, **kwargs):
+        super(QuantizableBottleneck, self).__init__(*args, **kwargs)
+        self.skip_add_relu = nn.quantized.FloatFunctional()
+        self.relu1 = nn.ReLU(inplace=False)
+        self.relu2 = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu2(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+        out = self.skip_add_relu.add_relu(out, identity)
+
+        return out
+
+    def fuse_model(self):
+        fuse_modules(self, [['conv1', 'bn1', 'relu1'],
+                            ['conv2', 'bn2', 'relu2'],
+                            ['conv3', 'bn3']], inplace=True)
+        if self.downsample:
+            torch.quantization.fuse_modules(self.downsample, ['0', '1'], inplace=True)
+
+
+
+class QuantizableResNet(nn.Module):
+
+    def __init__(self, *args, **kwargs):
+        super(QuantizableResNet, self).__init__() #*args, **kwargs
+
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
+
+        pool = PoolNet()
+        print(pool.test)
+
+        rl = ResNet_locate 
+
+    def forward(self, x):
+        x = self.quant(x)
+        # Ensure scriptability
+        # super(QuantizableResNet,self).forward(x)
+        # is not scriptable
+        x = self._forward_impl(x)
+        x = self.dequant(x)
+        return x
+
+    def fuse_model(self):
+        r"""Fuse conv/bn/relu modules in resnet models
+        Fuse conv+bn+relu/ Conv+relu/conv+Bn modules to prepare for quantization.
+        Model is modified in place.  Note that this operation does not change numerics
+        and the model after modification is in floating point
+        """
+
+        fuse_modules(self, ['conv1', 'bn1', 'relu'], inplace=True)
+        for m in self.modules():
+            if type(m) == QuantizableBottleneck or type(m) == QuantizableBasicBlock:
+                m.fuse_model()
+
+
+def _resnet(arch, block, layers, pretrained, progress, quantize, **kwargs):
+    model = QuantizableResNet(block, layers, **kwargs)
+    _replace_relu(model)
+    if quantize:
+        # TODO use pretrained as a string to specify the backend
+        backend = 'fbgemm'
+        quantize_model(model, backend)
+    else:
+        assert pretrained in [True, False]
+
+    if pretrained:
+        if quantize:
+            model_url = quant_model_urls[arch + '_' + backend]
+        else:
+            model_url = model_urls[arch]
+
+        state_dict = load_state_dict_from_url(model_url,
+                                              progress=progress)
+
+        model.load_state_dict(state_dict)
+    return model
+
+
+def resnet18(pretrained=False, progress=True, quantize=False, **kwargs):
+    r"""ResNet-18 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet('resnet18', QuantizableBasicBlock, [2, 2, 2, 2], pretrained, progress,
+                   quantize, **kwargs)
+
+
+def resnet50(pretrained=True, progress=True, quantize=False, **kwargs):
+    r"""ResNet-50 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet('resnet50', QuantizableBottleneck, [3, 4, 6, 3], pretrained, progress,
+                   quantize, **kwargs)
