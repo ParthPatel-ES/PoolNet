@@ -24,7 +24,7 @@ class BasicBlock(nn.Module):
         self.stride = stride
 
     def forward(self, x):
-        residual = x
+        identity = x
 
         out = self.conv1(x)
         out = self.bn1(out)
@@ -34,9 +34,9 @@ class BasicBlock(nn.Module):
         out = self.bn2(out)
 
         if self.downsample is not None:
-            residual = self.downsample(x)
+            identity = self.downsample(x)
 
-        out += residual
+        out += identity
         out = self.relu(out)
 
         return out
@@ -47,15 +47,19 @@ class Bottleneck(nn.Module):
 
     def __init__(self, inplanes, planes, stride=1,  dilation_ = 1, downsample=None):
         super(Bottleneck, self).__init__()
+
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride, bias=False) # change
         self.bn1 = nn.BatchNorm2d(planes,affine = affine_par)
+
         for i in self.bn1.parameters():
             i.requires_grad = False
+
         padding = 1
         if dilation_ == 2:
             padding = 2
         elif dilation_ == 4:
             padding = 4
+
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, # change
                                padding=padding, bias=False, dilation = dilation_)
         self.bn2 = nn.BatchNorm2d(planes,affine = affine_par)
@@ -70,7 +74,7 @@ class Bottleneck(nn.Module):
         self.stride = stride
 
     def forward(self, x):
-        residual = x
+        identity = x
 
         out = self.conv1(x)
         out = self.bn1(out)
@@ -84,22 +88,27 @@ class Bottleneck(nn.Module):
         out = self.bn3(out)
 
         if self.downsample is not None:
-            residual = self.downsample(x)
+            identity = self.downsample(x)
 
-        out += residual
+        out += identity
         out = self.relu(out)
 
         return out
 
 class ResNet(nn.Module):
     def __init__(self, block, layers):
+
         self.inplanes = 64
+
         super(ResNet, self).__init__()
+
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64,affine = affine_par)
+
         for i in self.bn1.parameters():
             i.requires_grad = False
+
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, ceil_mode=True) # change
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -115,7 +124,10 @@ class ResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+    #zero_init_residual might improve performance from core development
+
     def _make_layer(self, block, planes, blocks, stride=1,dilation__ = 1):
+        
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion or dilation__ == 2 or dilation__ == 4:
             downsample = nn.Sequential(
@@ -123,8 +135,10 @@ class ResNet(nn.Module):
                           kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(planes * block.expansion,affine = affine_par),
             )
+
         for i in downsample._modules['1'].parameters():
             i.requires_grad = False
+
         layers = []
         layers.append(block(self.inplanes, planes, stride,dilation_=dilation__, downsample = downsample ))
         self.inplanes = planes * block.expansion
@@ -156,21 +170,29 @@ class ResNet(nn.Module):
 
 class ResNet_locate(nn.Module):
     def __init__(self, block, layers):
+
         super(ResNet_locate,self).__init__()
-        self.resnet = ResNet(block, layers)
+        self.resnet = QuantizableResNet(block, layers)
         self.in_planes = 512
         self.out_planes = [512, 256, 256, 128]
 
         self.ppms_pre = nn.Conv2d(2048, self.in_planes, 1, 1, bias=False)
+
         ppms, infos = [], []
         for ii in [1, 3, 5]:
             ppms.append(nn.Sequential(nn.AdaptiveAvgPool2d(ii), nn.Conv2d(self.in_planes, self.in_planes, 1, 1, bias=False), nn.ReLU(inplace=True)))
+             
         self.ppms = nn.ModuleList(ppms)
 
         self.ppm_cat = nn.Sequential(nn.Conv2d(self.in_planes * 4, self.in_planes, 3, 1, 1, bias=False), nn.ReLU(inplace=True))
+
         for ii in self.out_planes:
             infos.append(nn.Sequential(nn.Conv2d(self.in_planes, ii, 3, 1, 1, bias=False), nn.ReLU(inplace=True)))
+            
+
         self.infos = nn.ModuleList(infos)
+        #print(self.infos)
+
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -202,3 +224,7 @@ class ResNet_locate(nn.Module):
 def resnet50_locate():
     model = ResNet_locate(Bottleneck, [3, 4, 6, 3])
     return model
+
+#testModel = resnet50_locate()
+#testVar = testModel
+#print(testVar)
