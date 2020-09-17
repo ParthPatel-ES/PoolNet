@@ -1,26 +1,15 @@
 import torch
 #from torchvision.models.resnet import Bottleneck, BasicBlock, ResNet, model_urls
 import torch.nn as nn
-#from torchvision.models.resnet import Bottleneck, BasicBlock, ResNet, model_urls
 from torchvision.models.utils import load_state_dict_from_url
 from torch.quantization import QuantStub, DeQuantStub, fuse_modules
 from torch._jit_internal import Optional
 from torchvision.models.quantization.utils import _replace_relu, quantize_model
-
-__all__ = ['QuantizableResNet', 'resnet18', 'resnet50',
-           'resnext101_32x8d']
-
-
-quant_model_urls = {
-    'resnet18_fbgemm':
-        'https://download.pytorch.org/models/quantized/resnet18_fbgemm_16fa66dd.pth',
-    'resnet50_fbgemm':
-        'https://download.pytorch.org/models/quantized/resnet50_fbgemm_bf931d71.pth',
-    'resnext101_32x8d_fbgemm':
-        'https://download.pytorch.org/models/quantized/resnext101_32x8_fbgemm_09835ccf.pth',
-}
-
-
+from torch.nn import init
+import torch.nn.functional as F
+import math
+from torch.autograd import Variable
+import numpy as np
 
 
 class QuantizableBasicBlock(BasicBlock):
@@ -127,8 +116,8 @@ class QuantizableResNet_locate(ResNet_locate):
     def __init__(self, *args, **kwargs):
         super(QuantizableResNet_locate, self).__init__(*args, **kwargs) 
         #QuantizableResNet(block, layers, **kwargs)
-        #self.quant = torch.quantization.QuantStub()
-        #self.dequant = torch.quantization.DeQuantStub()
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
 
         #pool = PoolNet()
         #print(pool.test)
@@ -137,12 +126,12 @@ class QuantizableResNet_locate(ResNet_locate):
 
     def forward(self, x):
         #xs = self.resnet(x)
-        #x = self.quant(x)
+        x = self.quant(x)
         # Ensure scriptability
         # super(QuantizableResNet,self).forward(x)
         # is not scriptable
-        #x = self.forward(x)
-        #x = self.dequant(x)
+        x = self.forward(x)
+        x = self.dequant(x)
         return x
 
     def fuse_model(self):
@@ -156,23 +145,15 @@ class QuantizableResNet_locate(ResNet_locate):
         for m in self.modules():
             print(m)
             if type(m) == QuantizableBottleneck or type(m) == QuantizableBasicBlock or type(m) == QuantizableResNet:
-                
                 m.fuse_model()
 
-def resnet(block=QuantizableBottleneck, layers=[3, 4, 6, 3], pretrained=False, quantize=True):
+def resnet(block=QuantizableBottleneck, layers=[3, 4, 6, 3]):
 
     model = QuantizableResNet_locate(block, layers)
     _replace_relu(model)
-    if quantize:
-        # TODO use pretrained as a string to specify the backend
-        backend = 'fbgemm'
-        quantize_model(model, backend)
-    else:
-        assert pretrained in [True, False]
+ 
+    # TODO use pretrained as a string to specify the backend
+    backend = 'fbgemm'
+    quantize_model(model, backend)
 
-    if pretrained:
-        state_dict = load_state_dict_from_url(model_url)
-        model.load_state_dict(state_dict)
-
-    return model
 
