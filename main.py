@@ -20,8 +20,8 @@ def get_test_info(sal_mode='e'):
         image_root = './data/SOD/Imgs/'
         image_source = './data/SOD/test.lst'
     elif sal_mode == 't':
-        image_root = './data/DUTS-TE/Imgs/'
-        image_source = './data/DUTS-TE/test.lst'
+        image_root = './data/DUTS/DUTS-TE-Image/'
+        image_source = './data/DUTS/DUTS-TE/test.lst'
     elif sal_mode == 'm_r': # for speed test
         image_root = './data/MSRA/Imgs_resized/'
         image_source = './data/MSRA/test_resized.lst'
