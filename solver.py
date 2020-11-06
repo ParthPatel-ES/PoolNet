@@ -4,7 +4,7 @@ from torch.nn import utils, functional as F
 from torch.optim import Adam
 from torch.autograd import Variable
 from torch.backends import cudnn
-from networks.poolnet import PNModel, weights_init
+from networks.poolnet import build_model, weights_init
 import scipy.misc as sm
 import numpy as np
 import os
@@ -22,7 +22,7 @@ class Solver(object):
         self.iter_size = config.iter_size
         self.show_every = config.show_every
         self.lr_decay_epoch = [15,]
-        self.PNModel()
+        self.build_model()
         if config.mode == 'test':
             print('Loading pre-trained model from %s...' % self.config.model)
             if self.config.cuda:
@@ -41,25 +41,22 @@ class Solver(object):
         print("The number of parameters: {}".format(num_params))
 
     # build the network
-    def PNModel(self):
-        self.net = PNModel()
+    def build_model(self):
+        self.net = build_model(self.config.arch)
         if self.config.cuda:
             self.net = self.net.cuda()
-        self.net.train()
+        # self.net.train()
         self.net.eval()  # use_global_stats = True
         self.net.apply(weights_init)
-        #if self.config.load == '':
-            #print(self.net.base)
-            #self.net.base.load_pretrained_model(torch.load(self.config.pretrained_model))
-        #else:
-            #self.net.load_state_dict(torch.load(self.config.load))
+        if self.config.load == '':
+            self.net.base.load_pretrained_model(torch.load(self.config.pretrained_model))
+        else:
+            self.net.load_state_dict(torch.load(self.config.load))
 
         self.lr = self.config.lr
         self.wd = self.config.wd
 
-        #self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters()), lr=self.lr, weight_decay=self.wd)
-        self.optimizer = torch.optim.SGD(self.net.parameters(), lr = 0.0001)
-        self.net.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+        self.optimizer = Adam(filter(lambda p: p.requires_grad, self.net.parameters()), lr=self.lr, weight_decay=self.wd)
         self.print_network(self.net, 'PoolNet Structure')
 
     def test(self):
@@ -94,7 +91,7 @@ class Solver(object):
                     continue
                 sal_image, sal_label= Variable(sal_image), Variable(sal_label)
                 if self.config.cuda:
-                    cudnn.benchmark = True
+                    # cudnn.benchmark = True
                     sal_image, sal_label = sal_image.cuda(), sal_label.cuda()
 
                 sal_pred = self.net(sal_image)

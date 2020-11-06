@@ -20,7 +20,7 @@ def get_test_info(sal_mode='e'):
         image_root = './data/SOD/Imgs/'
         image_source = './data/SOD/test.lst'
     elif sal_mode == 't':
-        image_root = './data/DUTS/DUTS-TE-Image/'
+        image_root = './data/DUTS/DUTS-TE/DUTS-TE-Image/'
         image_source = './data/DUTS/DUTS-TE/test.lst'
     elif sal_mode == 'm_r': # for speed test
         image_root = './data/MSRA/Imgs_resized/'
@@ -50,8 +50,7 @@ def main(config):
 
 if __name__ == '__main__':
 
-    vgg_path = './dataset/pretrained/vgg16_20M.pth'
-    resnet_path = './dataset/pretrained/PATH.pth'
+    resnet_path = './dataset/pretrained/resnet50_caffe.pth'
 
     parser = argparse.ArgumentParser()
 
@@ -59,7 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_color', type=int, default=3)
     parser.add_argument('--lr', type=float, default=5e-5) # Learning rate resnet:5e-5, vgg:1e-4
     parser.add_argument('--wd', type=float, default=0.0005) # Weight decay
-    parser.add_argument('--no-cuda', dest='cuda', action='store_true')
+    parser.add_argument('--no-cuda', dest='cuda', action='store_false')
 
     # Training settings
     parser.add_argument('--arch', type=str, default='resnet') # resnet or vgg
@@ -74,13 +73,13 @@ if __name__ == '__main__':
     parser.add_argument('--show_every', type=int, default=50)
 
     # Train data
-    parser.add_argument('--train_root', type=str, default='')
-    parser.add_argument('--train_list', type=str, default='')
+    parser.add_argument('--train_root', type=str, default='./data/DUTS/DUTS-TR')
+    parser.add_argument('--train_list', type=str, default='./data/DUTS/DUTS-TR/train_pair.lst')
 
     # Testing settings
     parser.add_argument('--model', type=str, default=None) # Snapshot
     parser.add_argument('--test_fold', type=str, default=None) # Test results saving folder
-    parser.add_argument('--sal_mode', type=str, default='e') # Test image dataset
+    parser.add_argument('--sal_mode', type=str, default='t') # Test image dataset
 
     # Misc
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
