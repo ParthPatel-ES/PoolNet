@@ -4,7 +4,7 @@ from torch.nn import utils, functional as F
 from torch.optim import Adam
 from torch.autograd import Variable
 from torch.backends import cudnn
-from networks.poolnet import build_model, weights_init
+from networks.poolnet import PNModel, weights_init
 import scipy.misc as sm
 import numpy as np
 import os
@@ -22,7 +22,7 @@ class Solver(object):
         self.iter_size = config.iter_size
         self.show_every = config.show_every
         self.lr_decay_epoch = [15,]
-        self.build_model()
+        self.PNModel()
         if config.mode == 'test':
             print('Loading pre-trained model from %s...' % self.config.model)
             if self.config.cuda:
@@ -41,8 +41,8 @@ class Solver(object):
         print("The number of parameters: {}".format(num_params))
 
     # build the network
-    def build_model(self):
-        self.net = build_model(self.config.arch)
+    def PNModel(self):
+        self.net = PNModel()
         if self.config.cuda:
             self.net = self.net.cuda()
         # self.net.train()
